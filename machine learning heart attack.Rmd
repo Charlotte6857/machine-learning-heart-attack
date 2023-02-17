@@ -1,0 +1,330 @@
+---
+title: "final project"
+author: "Jessie Chen"
+date: "4/26/2022"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+library(tidyverse)
+library(MASS)
+library(caret)
+library(ISLR)
+library(pROC)
+library(tree)
+library(randomForest)
+library(leaps)
+library(egg)
+library(dplyr)
+library(plotmo)
+library(glmnet)
+library(gbm)
+library(mlbench)
+library(keras)
+library(tfdatasets)
+```
+
+
+```{r cars}
+library(readr)
+ha <- read_csv("Desktop/finalproject/heart.csv")
+head(ha)
+ha$target <- as.factor(ha$target)
+head(ha)
+n_all <- nrow(ha)
+set.seed(0)
+tr_ind <- sample(n_all, round(n_all/2))
+tr <- ha[tr_ind, ]
+te <- ha[-tr_ind, ]
+```
+##model seleciton
+
+```{r}
+best_subset <- regsubsets(target ~ ., data = tr, nvmax = ncol(ha)-1) 
+best_subset_sum <- summary(best_subset)
+
+plot(best_subset, scale = "r2")
+plot(best_subset, scale = "adjr2")
+plot(best_subset, scale = "Cp")
+plot(best_subset, scale = "bic")
+
+
+measures <- c("rsq", "adjr2", "cp", "bic")
+our_names <- c("R2", "Adjusted R2", "Cp", "BIC")
+size_seq <- 1:length(best_subset_sum$rsq)
+my_plots <- NULL
+for(mea_ind in seq_along(measures)){
+  dat <- data.frame(d = size_seq, val = best_subset_sum[[measures[mea_ind]]])
+  my_plots[[mea_ind]] <- ggplot(dat, mapping = aes(x = d, y = val)) + geom_point() + geom_line() +
+    ggtitle(our_names[mea_ind])
+
+grid.arrange(grobs = my_plots, ncol = 2)
+}
+```
+# Forward Stepwise Selection 
+```{r}
+forward_fit <- regsubsets(target ~ ., data = tr, method = "forward", nvmax = ncol(ha)-1)
+forward_sum <- summary(forward_fit)
+best_ind <- which.min(forward_sum$bic)
+coef(forward_fit, best_ind)
+```
+## backward step
+```{r}
+backward_fit <- regsubsets(target ~ ., data = tr, method = "backward", nvmax = ncol(ha)-1)
+backward_sum <- summary(backward_fit)
+best_ind <- which.min(backward_sum$bic)
+coef(backward_fit, best_ind)
+```
+## binary classification
+```{r}
+logi <- glm(target ~ ., data = tr, family='binomial')
+y_tr4_ <- predict(logi, type = 'response', newdata = tr)
+y_tr4 <- ifelse(y_tr4_ > 0.5, '1', '0')
+table(true = tr$target, predicted = y_tr4)
+mean(y_tr4 != tr$target)
+y_te4_ <- predict(logi, type = 'response', newdata = te)
+y_te4 <- ifelse(y_te4_ > 0.5, '1', '0')
+table(true = te$target, predicted = y_te4)
+mean(y_te4 != te$target)
+```
+## LDA
+```{r}
+lda <- lda(target ~ ., data = tr)
+lda
+y_tr1_ <- predict(lda, tr)
+y_tr1 <- y_tr1_$class
+mean(y_tr1 != tr$target)
+y_te1_ <- predict(lda, te)
+y_te1 <- y_te1_$class
+mean(y_te1 != te$target)
+```
+## QDA
+```{r}
+qda <- qda(target ~ ., data = tr)
+qda
+y_tr2_ <- predict(qda, tr)
+y_tr2 <- y_tr2_$class
+mean(y_tr2 != tr$target)
+y_te2_ <- predict(qda, te)
+y_te2 <- y_te2_$class
+mean(y_te2 != te$target)
+```
+## KNN
+```{r}
+k_seq <- seq(from = 1, to = n_all/2, by = 10)
+train_error_seq <- test_error_seq<- NULL
+for(k_ind in seq_along(k_seq)){
+ k <- k_seq[k_ind]
+ fit_knn <- knn3(target ~ ., data = tr, k = k)
+ y_tr3 <- predict(fit_knn, newdata = tr, type = "class")
+ 
+ train_error_seq[k_ind] <- mean(y_tr3 != tr$target)
+ y_te3 <- predict(fit_knn, newdata = te, type = "class")
+ test_error_seq[k_ind] <- mean(y_te3 != te$target)
+}
+knn_re <- rbind(data.frame(K = k_seq, error = train_error_seq, type = "train"),
+                data.frame(K = k_seq, error = test_error_seq, type = "test"))
+mytheme <- theme(axis.title = element_text(size = 30),
+        axis.text = element_text(size = 20),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20))
+ggplot(knn_re, mapping = aes(x = K, y = error, color = type)) +
+  geom_point(size = 2) +
+  geom_line(size = 2) +
+  mytheme
+
+
+
+## k fold 
+K <- 5
+n_all <- nrow(ha)
+fold_ind <- sample(1:K, n_all, replace = TRUE)
+K_seq <- seq(from = 1, to = 150, by = 10)
+CV_error_seq <- sapply(K_seq, function(K_cur){
+  mean(sapply(1:K, function(j){
+ fit_knn <- knn3(target ~ ., data = ha[fold_ind != j, ], k = K_cur)
+ pred_knn <- predict(fit_knn, newdata = ha[fold_ind == j, ], type = "class")
+ mean(pred_knn != ha$target[fold_ind == j])
+}))
+})
+knn_re <- data.frame(K = K_seq, CV_error = CV_error_seq)
+mytheme <- theme(axis.title = element_text(size = 30),
+        axis.text = element_text(size = 20),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20))
+ggplot(knn_re, mapping = aes(x = K, y = CV_error)) +
+  geom_point(size = 2) +
+  geom_line(size = 2) +
+  mytheme
+best_ind <- which.min(knn_re$CV_error)
+
+
+knn <- knn3(target ~ ., data = tr, k = 3)
+y_tr3 <- predict(knn, newdata = tr, type = "class")
+mean(y_tr3 != tr$target)
+y_te3 <- predict(knn, newdata = te, type = "class")
+mean(y_te3 != te$target)
+```
+## Compare different method using ggroc
+```{r}
+lda.fit <- lda(target ~ ., data = tr)
+lda.pred <- predict(lda.fit)$posterior[, 2]
+rocobj_lda <- roc(tr$target, lda.pred)
+auc_lda <- auc(rocobj_lda)
+qda.fit <- qda(target ~ ., data = tr)
+qda.pred <- predict(qda.fit)$posterior[, 2]
+rocobj_qda <- roc(tr$target, qda.pred)
+auc_qda <- auc(rocobj_qda)
+knn.fit <- knn3(target ~ ., data = tr, k = 3,
+                prob = TRUE)
+knn.pred <- predict(knn.fit, newdata = tr, type = "prob")
+rocobj_knn <- roc(tr$target, knn.pred[ ,2])
+auc_knn <- auc(rocobj_knn)
+fit_logi <- glm(target ~ ., data = tr, family='binomial')
+pred_train_prob <- predict(fit_logi, type = 'response')
+rocobj_logi <- roc(tr$target, pred_train_prob)
+auc_logi<-auc(rocobj_logi)
+rocobjs <- list(Logistic = rocobj_logi, LDA = rocobj_lda, QDA = rocobj_qda,
+                KNN = rocobj_knn)
+methods_auc <- paste(c("Logistic", "LDA", "QDA","KNN"),
+                     "AUC = ", 
+                     round(c(auc_logi, auc_lda, auc_qda, auc_knn),3))
+ggroc(rocobjs, size = 2, alpha = 0.5) + 
+  scale_color_discrete(labels = methods_auc) +
+  mytheme
+```
+## LOOCV
+```{r}
+mean(sapply(1:nrow(ha), function(j){
+    fit <- glm(target ~ ., data = ha[-j, ], family = "binomial")
+    pred_prob <- predict(fit, newdata = ha[j, ], type = "response")
+    pred_label <- ifelse(pred_prob > 0.5, "1", "0")
+  mean(ha$target[j] != pred_label)
+  }))
+
+mean(sapply(1:nrow(ha), function(j){
+    fit <- lda(target ~ ., data = ha[-j, ])
+    pre <- predict(fit, newdata = ha[j, ])$class
+  mean(pre != ha$target[j])
+  }))
+
+mean(sapply(1:nrow(ha), function(j){
+    fit <- qda(target ~ ., data = ha[-j, ])
+    pre <- predict(fit, newdata = ha[j, ])$class
+  mean(pre != ha$target[j])
+  }))
+
+mean(sapply(1:nrow(ha), function(j){
+    fit <- knn3(target ~ ., data = ha[-j, ], k = 4)
+    pre <- predict(fit, newdata = ha[j, ], type = "class")
+  mean(pre != ha$target[j])
+  }))
+```
+## $k$-fold CV for model selection
+```{r}
+K <- 5
+set.seed(0)
+fold_ind <- sample(1:K, n_all, replace = TRUE)
+
+mean(sapply(1:K, function(j){
+    fit <- glm(target ~ ., data = ha[fold_ind != j, ], family = "binomial")
+    pred_prob <- predict(fit, newdata = ha[fold_ind == j, ], type = "response")
+    pred_label <- ifelse(pred_prob > 0.5, "1", "0")
+  mean(ha$target[fold_ind == j] != pred_label)
+  }))
+
+mean(sapply(1:K, function(j){
+    fit <- lda(target ~ ., data = ha[fold_ind != j, ])
+    pre <- predict(fit, newdata = ha[fold_ind == j, ])$class
+  mean(pre != ha$target[fold_ind == j])
+  }))
+
+mean(sapply(1:K, function(j){
+    fit <- qda(target ~ ., data = ha[fold_ind != j, ])
+    pre <- predict(fit, newdata = ha[fold_ind == j, ])$class
+  mean(pre != ha$target[fold_ind == j])
+  }))
+
+mean(sapply(1:K, function(j){
+    fit <- knn3(target ~ ., data = ha[fold_ind != j, ], k = 4)
+    pre <- predict(fit, newdata = ha[fold_ind == j,], type = "class")
+  mean(pre != ha$target[fold_ind == j])
+  }))
+```
+## decision tree
+```{r}
+tree <- tree(target ~ ., data = tr)
+set.seed(0)
+cv.tree <- cv.tree(tree)
+cv.tree_df <- data.frame(size = cv.tree$size, deviance = cv.tree$dev)
+best_size <- cv.tree$size[which.min(cv.tree$dev)]
+ggplot(cv.tree_df, mapping = aes(x = size, y = deviance)) + 
+  geom_point(size = 3) + 
+  geom_line() +
+  geom_vline(xintercept = best_size, col = "red")
+tree.final <- prune.tree(tree, best = best_size) 
+plot(tree.final)
+text(tree.final)
+
+y_tr5 <- predict(tree.final, newdata = tr, type = "class")
+mean(y_tr5 != tr$target)
+
+y_te5 <- predict(tree.final, newdata = te, type = "class")
+mean(y_te5 != te$target)
+```
+## bagging
+```{r}
+set.seed(0)
+p <- ncol(ha)-1
+bag <- randomForest(target ~ ., data = tr, mtry = p, importance=TRUE)
+bag
+
+y_tr7 <- predict(bag, newdata = tr)
+mean(y_tr7 != tr$target)
+
+y_te7 <- predict(bag, newdata = te)
+mean(y_te7 != te$target)
+
+importance(bag)
+varImpPlot(bag)
+```
+## random forest
+```{r}
+set.seed(0)
+rf <- randomForest(target ~ ., data = tr, importance = TRUE)
+y_tr8 <- predict(rf, newdata = tr)
+mean(y_tr8 != tr$target)
+y_te8 <- predict(rf, newdata = te)
+mean(y_te8 != te$target)
+
+importance(rf)
+varImpPlot(rf)
+```
+## boosting
+```{r}
+set.seed(0)
+boost <- gbm(target ~ .,data = tr, distribution = "multinomial", n.trees = 5000, interaction.depth = 1, cv.folds = 5, shrinkage = 0.2)
+best_n_tress <- which.min(boost$cv.error)
+summary(boost)
+
+y_tr9_ <- predict(boost, newdata =tr, n.trees = best_n_tress, type = "response")
+y_tr9 <- levels(tr$target)[apply(y_tr9_, 1, which.max)]
+mean(y_tr9 != tr$target)
+
+y_te9_ <- predict(boost, newdata =te, n.trees = best_n_tress, type = "response")
+y_te9 <- levels(te$target)[apply(y_te9_, 1, which.max)]
+mean(y_te9 != te$target)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
